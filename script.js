@@ -1,17 +1,18 @@
+// DOM Elements
 const chatBody = document.querySelector(".chat-body");
 const messageInput = document.querySelector(".message-input");
-const sendMessage = document.querySelector("#send-message");
+const sendMessageBtn = document.querySelector("#send-message");
 const fileInput = document.querySelector("#file-input");
 const fileUploadWrapper = document.querySelector(".file-upload-wrapper");
 const fileCancelButton = fileUploadWrapper.querySelector("#file-cancel");
 const chatbotToggler = document.querySelector("#chatbot-toggler");
 const closeChatbot = document.querySelector("#close-chatbot");
 
-// API setup
-const API_KEY = "AIzaSyCQXdM8mF1o7j7KlC2ue75X37ZIU_cDTVk";
-const API_URL = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${API_KEY}`;
+// Proxy Configuration
+const PROXY_URL = "https://deepsleep.joeqiao1234.workers.dev";
+const PROXY_TOKEN = "YOUR_SECRET_TOKEN"; // Optional: Match this with your Worker's expected token
 
-// Initialize user message and file data
+// User data and state
 const userData = {
   message: null,
   file: {
@@ -20,11 +21,11 @@ const userData = {
   },
 };
 
-// Store chat history
-const chatHistory = [];
+// Initialize chat
 const initialInputHeight = messageInput.scrollHeight;
+let isWaitingForResponse = false;
 
-// Create message element with dynamic classes and return it
+// Create message element
 const createMessageElement = (content, ...classes) => {
   const div = document.createElement("div");
   div.classList.add("message", ...classes);
@@ -32,154 +33,142 @@ const createMessageElement = (content, ...classes) => {
   return div;
 };
 
-// Generate bot response using API
+// Generate bot response via proxy
 const generateBotResponse = async (incomingMessageDiv) => {
   const messageElement = incomingMessageDiv.querySelector(".message-text");
-
-  // Add user message to chat history
-  chatHistory.push({
-    role: "user",
-    parts: [{ text: userData.message }, ...(userData.file.data ? [{ inline_data: userData.file }] : [])],
-  });
-
-  // API request options
+  
   const requestOptions = {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${PROXY_TOKEN}` // Remove if not using auth
+    },
     body: JSON.stringify({
-      contents: chatHistory,
+      message: userData.message,
+      ...(userData.file.data && {
+        file: {
+          data: userData.file.data,
+          mime_type: userData.file.mime_type
+        }
+      })
     }),
   };
 
   try {
-    // Fetch bot response from API
-    const response = await fetch(API_URL, requestOptions);
+    const response = await fetch(PROXY_URL, requestOptions);
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error.message);
+    
+    if (!response.ok) {
+      throw new Error(data.error || "Failed to get response");
+    }
 
-    // Extract and display bot's response text
-    const apiResponseText = data.candidates[0].content.parts[0].text.replace(/\*\*(.*?)\*\*/g, "$1").trim();
-    messageElement.innerText = apiResponseText;
-
-    // Add bot response to chat history
-    chatHistory.push({
-      role: "model",
-      parts: [{ text: apiResponseText }],
-    });
+    // Display the response (adjust based on your proxy's response format)
+    const responseText = data.response || data.text || "I didn't understand that";
+    messageElement.innerText = responseText;
+    
   } catch (error) {
-    // Handle error in API response
-    console.log(error);
-    messageElement.innerText = error.message;
-    messageElement.style.color = "#ff0000";
+    console.error("Proxy Error:", error);
+    messageElement.innerText = "DeepSleep AI is unavailable. Please try again later.";
+    messageElement.style.color = "#ff4d4f";
   } finally {
-    // Reset user's file data, removing thinking indicator and scroll chat to bottom
-    userData.file = {};
     incomingMessageDiv.classList.remove("thinking");
+    isWaitingForResponse = false;
     chatBody.scrollTo({ top: chatBody.scrollHeight, behavior: "smooth" });
+    userData.file = {};
   }
 };
 
-// Handle outgoing user messages
+// Handle outgoing message
 const handleOutgoingMessage = (e) => {
   e.preventDefault();
-  userData.message = messageInput.value.trim();
+  
+  if (isWaitingForResponse) return;
+  
+  const message = messageInput.value.trim();
+  if (!message && !userData.file.data) return;
+
+  userData.message = message;
   messageInput.value = "";
-  messageInput.dispatchEvent(new Event("input"));
+  messageInput.style.height = `${initialInputHeight}px`;
   fileUploadWrapper.classList.remove("file-uploaded");
 
-  // Create and display user message
-  const messageContent = `<div class="message-text"></div>
-                          ${userData.file.data ? `<img src="data:${userData.file.mime_type};base64,${userData.file.data}" class="attachment" />` : ""}`;
+  // Create user message
+  const userMessageContent = `
+    <div class="message-text">${userData.message}</div>
+    ${userData.file.data ? `<img src="data:${userData.file.mime_type};base64,${userData.file.data}" class="attachment" />` : ""}
+  `;
+  const userMessageDiv = createMessageElement(userMessageContent, "user-message");
+  chatBody.appendChild(userMessageDiv);
 
-  const outgoingMessageDiv = createMessageElement(messageContent, "user-message");
-  outgoingMessageDiv.querySelector(".message-text").innerText = userData.message;
-  chatBody.appendChild(outgoingMessageDiv);
+  // Create thinking indicator
+  const botMessageContent = `
+    <img class="bot-avatar" src="robotic.png" alt="DeepSleep AI" width="50" height="50">
+    <div class="message-text">
+      <div class="thinking-indicator">
+        <div class="dot"></div>
+        <div class="dot"></div>
+        <div class="dot"></div>
+      </div>
+    </div>
+  `;
+  const botMessageDiv = createMessageElement(botMessageContent, "bot-message", "thinking");
+  chatBody.appendChild(botMessageDiv);
   chatBody.scrollTo({ top: chatBody.scrollHeight, behavior: "smooth" });
 
-  // Simulate bot response with thinking indicator after a delay
-  setTimeout(() => {
-    const messageContent = `<img class="bot-avatar" src="robotic.png" alt="Chatbot Logo" width="50" height="50">
-          </img>
-          <div class="message-text">
-            <div class="thinking-indicator">
-              <div class="dot"></div>
-              <div class="dot"></div>
-              <div class="dot"></div>
-            </div>
-          </div>`;
-
-    const incomingMessageDiv = createMessageElement(messageContent, "bot-message", "thinking");
-    chatBody.appendChild(incomingMessageDiv);
-    chatBody.scrollTo({ top: chatBody.scrollHeight, behavior: "smooth" });
-    generateBotResponse(incomingMessageDiv);
-  }, 600);
+  isWaitingForResponse = true;
+  generateBotResponse(botMessageDiv);
 };
 
-// Adjust input field height dynamically
+// Event Listeners
 messageInput.addEventListener("input", () => {
   messageInput.style.height = `${initialInputHeight}px`;
   messageInput.style.height = `${messageInput.scrollHeight}px`;
-  document.querySelector(".chat-form").style.borderRadius = messageInput.scrollHeight > initialInputHeight ? "15px" : "32px";
+  document.querySelector(".chat-form").style.borderRadius = 
+    messageInput.scrollHeight > initialInputHeight ? "15px" : "32px";
 });
 
-// Handle Enter key press for sending messages
 messageInput.addEventListener("keydown", (e) => {
-  const userMessage = e.target.value.trim();
-  if (e.key === "Enter" && !e.shiftKey && userMessage && window.innerWidth > 768) {
+  if (e.key === "Enter" && !e.shiftKey && messageInput.value.trim()) {
     handleOutgoingMessage(e);
   }
 });
 
-// Handle file input change and preview the selected file
 fileInput.addEventListener("change", () => {
   const file = fileInput.files[0];
   if (!file) return;
 
   const reader = new FileReader();
   reader.onload = (e) => {
-    fileInput.value = "";
     fileUploadWrapper.querySelector("img").src = e.target.result;
     fileUploadWrapper.classList.add("file-uploaded");
-    const base64String = e.target.result.split(",")[1];
-
-    // Store file data in userData
     userData.file = {
-      data: base64String,
-      mime_type: file.type,
+      data: e.target.result.split(",")[1],
+      mime_type: file.type
     };
   };
-
   reader.readAsDataURL(file);
 });
 
-// Cancel file upload
 fileCancelButton.addEventListener("click", () => {
   userData.file = {};
   fileUploadWrapper.classList.remove("file-uploaded");
 });
 
-// Initialize emoji picker and handle emoji selection
-const picker = new EmojiMart.Picker({
-  theme: "light",
-  skinTonePosition: "none",
-  previewPosition: "none",
-  onEmojiSelect: (emoji) => {
-    const { selectionStart: start, selectionEnd: end } = messageInput;
-    messageInput.setRangeText(emoji.native, start, end, "end");
-    messageInput.focus();
-  },
-  onClickOutside: (e) => {
-    if (e.target.id === "emoji-picker") {
-      document.body.classList.toggle("show-emoji-picker");
-    } else {
-      document.body.classList.remove("show-emoji-picker");
-    }
-  },
-});
-
-document.querySelector(".chat-form").appendChild(picker);
-
-sendMessage.addEventListener("click", (e) => handleOutgoingMessage(e));
+sendMessageBtn.addEventListener("click", handleOutgoingMessage);
 document.querySelector("#file-upload").addEventListener("click", () => fileInput.click());
 closeChatbot.addEventListener("click", () => document.body.classList.remove("show-chatbot"));
 chatbotToggler.addEventListener("click", () => document.body.classList.toggle("show-chatbot"));
+
+// Initialize emoji picker
+const picker = new EmojiMart.Picker({
+  theme: "light",
+  onEmojiSelect: (emoji) => {
+    const cursorPos = messageInput.selectionStart;
+    messageInput.value = messageInput.value.substring(0, cursorPos) + 
+                         emoji.native + 
+                         messageInput.value.substring(cursorPos);
+    messageInput.focus();
+    messageInput.selectionEnd = cursorPos + emoji.native.length;
+  }
+});
+document.querySelector(".chat-form").appendChild(picker);
